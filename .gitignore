@@ -1,0 +1,55 @@
+# --- Dipendenze e Build ---
+node_modules/
+dist/
+dist-ssr/
+build/
+.gradle/
+capacitor-cordova-android-plugins/
+problems-report.html
+
+# --- Artifacts e Cache ---
+.artifacts/
+.parcel-cache/
+.cache/
+.temp/
+.eslintcache
+
+# --- Variabili d'ambiente e Locali ---
+.env
+.env.local
+.env.*.local
+*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Editor e IDE ---
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+
+# --- Android Specific ---
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/.idea/
+android/captures/
+android/*.iml
+android/.externalNativeBuild/
+android/.cxx/
+android/app/src/main/assets/public/
+
+# --- Capacitor ---
+www/
+capture/
