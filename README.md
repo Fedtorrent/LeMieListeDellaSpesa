@@ -57,6 +57,6 @@ L'applicazione è sviluppata con **React** e **TypeScript**, utilizzando **Capac
 ## 🚀 Versione 1.1.0
 
 <p align="right">
-  Sviluppato con ❤️ da F.  
+  Sviluppato con ❤️ da  
   <img src="public/IconaPersonale.png" width="50" alt="Developer Icon">
 </p>
