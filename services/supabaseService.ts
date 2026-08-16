@@ -182,6 +182,21 @@ export const repository = {
     } catch (e) {
       addToQueue({ id: product.id, table: 'catalog', action: 'upsert', payload });
     }
+  },
+
+  async deleteCatalog(productId: string) {
+    const fId = getFamilyCode();
+    try {
+      // Aggiungiamo .eq('family_id', fId) per assicurarci di eliminare solo i nostri
+      const { error } = await supabase
+        .from('catalog')
+        .delete()
+        .eq('id', productId)
+        .eq('family_id', fId);
+      if (error) throw error;
+    } catch (e) {
+      addToQueue({ id: productId, table: 'catalog', action: 'delete', payload: null });
+    }
   }
 };
 

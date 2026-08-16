@@ -315,9 +315,15 @@ function App() {
       setDb(prev => [...prev, p!]);
       if (isCloudActive) repository.upsertCatalog(p!);
     } else {
+      // Se è un prodotto Master (familyId null), non aggiorniamo il record nel cloud per evitare modifiche globali
+      // ma incrementiamo il contatore localmente
+      const isMaster = !p.familyId;
       p = { ...p, usageCount: p.usageCount + 1, updatedAt: now };
       setDb(prev => prev.map(x => x.id === p!.id ? p! : x));
-      if (isCloudActive) repository.upsertCatalog(p!);
+
+      if (isCloudActive && !isMaster) {
+        repository.upsertCatalog(p!);
+      }
     }
 
     const it: GroceryItem = { id: generateUUID(), productId: p!.id, isChecked: false, quantity: q, unit: u, notes: notes || null, updatedAt: now };
@@ -341,10 +347,25 @@ function App() {
       const pid = id.replace('CATALOG_EDIT_', '');
       const product = db.find(x => x.id === pid);
       if (product) {
-        const updatedP = { ...product, ...up, updatedAt: now };
-        setDb(prev => prev.map(x => x.id === pid ? updatedP : x));
-        if (isCloudActive) {
-          repository.upsertCatalog(updatedP);
+        const isMaster = !product.familyId;
+        if (isMaster) {
+          // COPY-ON-WRITE: Se l'utente modifica un prodotto MASTER, creiamo una copia per la famiglia
+          const newId = generateUUID();
+          const familyProduct: ProductDatabaseEntry = {
+            ...product,
+            ...up,
+            id: newId,
+            familyId: familyCode,
+            updatedAt: now
+          };
+          setDb(prev => [...prev, familyProduct]);
+          if (isCloudActive) repository.upsertCatalog(familyProduct);
+          showToast("Personalizzazione catalogo salvata");
+        } else {
+          // Aggiornamento normale se il prodotto è già della famiglia
+          const updatedP = { ...product, ...up, updatedAt: now };
+          setDb(prev => prev.map(x => x.id === pid ? updatedP : x));
+          if (isCloudActive) repository.upsertCatalog(updatedP);
         }
       }
       if (up.category && color) setCategoryColors(prev => ({ ...prev, [up.category]: color }));
@@ -371,6 +392,21 @@ function App() {
       }
     }
     setEditingItem(null);
+  };
+
+  const deleteCatalogProduct = async (productId: string) => {
+    const product = db.find(p => p.id === productId);
+    if (!product || !product.familyId) return; // Sicurezza: solo se è della famiglia
+
+    setDb(prev => prev.filter(p => p.id !== productId));
+    if (isCloudActive) {
+      try {
+        await repository.deleteCatalog(productId);
+        showToast("Personalizzazione rimossa");
+      } catch (e) {
+        setSyncStatus('error');
+      }
+    }
   };
 
   // --- RENDER HELPERS ---
@@ -408,12 +444,29 @@ function App() {
   }, [hydratedItems, sortMode]);
 
   const filteredCatalog = useMemo(() => {
-    const unique = new Map();
+    const unique = new Map<string, ProductDatabaseEntry>();
     db.filter(Boolean).forEach(p => {
-      const name = p.normalizedName || "";
-      const cat = p.category || "Altro";
-      const k = `${name.toLowerCase()}_${cat.toLowerCase()}`;
-      if (!unique.has(k) || (p.usageCount || 0) > unique.get(k).usageCount) unique.set(k, p);
+      const name = (p.normalizedName || "").toLowerCase();
+      if (!name) return;
+
+      const existing = unique.get(name);
+      // Priorità:
+      // 1. Prodotti della famiglia (familyId non null) scavalcano sempre i Master
+      // 2. A parità di "tipo", vince quello più usato
+      if (!existing) {
+        unique.set(name, p);
+      } else {
+        const isExistingMaster = !existing.familyId;
+        const isCurrentMaster = !p.familyId;
+
+        if (isExistingMaster && !isCurrentMaster) {
+          unique.set(name, p);
+        } else if (isExistingMaster === isCurrentMaster) {
+          if ((p.usageCount || 0) > (existing.usageCount || 0)) {
+            unique.set(name, p);
+          }
+        }
+      }
     });
     let f = Array.from(unique.values());
     if (inputValue.trim()) f = f.filter(p => p.normalizedName.toLowerCase().includes(inputValue.toLowerCase().trim()));
@@ -716,9 +769,36 @@ function App() {
                 <button onClick={() => { setEditingItem({ id: catalogMode === 'global' ? 'CATALOG_ADD_NEW' : 'ADD_FROM_CATALOG_' + inputValue, normalizedName: inputValue, category: 'Altro', emoji: '🛒', quantity: 1, unit: 'pz' }); setInputValue(''); }} className="w-full p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-xl font-bold flex items-center gap-2"><Plus size={18}/> Aggiungi "{inputValue}"</button>
               )}
               {filteredCatalog.map(p => (
-                <div key={p.id} onClick={() => { setEditingItem(catalogMode === 'list' ? { ...p, id: 'ADD_FROM_CATALOG_' + p.normalizedName, quantity: 1, unit: 'pz' } : { ...p, id: 'CATALOG_EDIT_' + p.id }); setInputValue(''); }} className="flex items-center gap-3 p-3 bg-white dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 cursor-pointer active:scale-95 transition-transform">
-                  <ProductIcon emoji={p.emoji} category={p.category} customColorClass={categoryColors[p.category]} />
-                  <div className="flex-1"><p className="font-bold">{p.normalizedName}</p><p className="text-xs text-gray-400">{p.category}</p></div>
+                <div key={p.id} className="flex items-center gap-3 p-3 bg-white dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 group active:scale-[0.98] transition-transform">
+                  <div
+                    onClick={() => { setEditingItem(catalogMode === 'list' ? { ...p, id: 'ADD_FROM_CATALOG_' + p.normalizedName, quantity: 1, unit: 'pz' } : { ...p, id: 'CATALOG_EDIT_' + p.id }); setInputValue(''); }}
+                    className="flex-1 flex items-center gap-3 cursor-pointer"
+                  >
+                    <ProductIcon emoji={p.emoji} category={p.category} customColorClass={categoryColors[p.category]} />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold">{p.normalizedName}</p>
+                        {p.familyId && (
+                          <span className="text-[9px] bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider">Mio</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400">{p.category}</p>
+                    </div>
+                  </div>
+
+                  {p.familyId && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Vuoi eliminare la tua personalizzazione per "${p.normalizedName}"? Tornerà alla versione standard.`)) {
+                          deleteCatalogProduct(p.id);
+                        }
+                      }}
+                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
